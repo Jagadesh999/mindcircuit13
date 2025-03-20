@@ -1,0 +1,78 @@
+pipeline {
+    agent any
+
+    tools {
+        maven 'maven3'
+    }
+
+    environment {
+        GIT_REPO_NAME = "mindcircuit13"
+        GIT_USER_NAME = "Jagadesh999"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Cloning GitHub Repo'
+                git branch: 'main', url: 'https://github.com/Jagadesh999/mindcircuit13.git'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Scanning project'
+                sh 'ls -ltr'
+                
+                sh '''
+                    mvn sonar:sonar \
+                    -Dsonar.host.url=http://54.83.122.63:9000 \
+                    -Dsonar.login=squ_e08d6f7afdf309cff088bd2293cb246f30025c1d || true
+                '''
+            }
+        }
+
+        stage('Build Artifact') {
+            steps {
+                echo 'Building JAR/WAR'
+                sh 'mvn clean package'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker Image'
+                sh 'docker build -t jagadesh999/batch13:${BUILD_NUMBER} .'
+            }
+        }
+
+        stage('Push to DockerHub') {
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'dockerhub', variable: 'DOCKER_PASS')]) {
+                        sh 'echo "$DOCKER_PASS" | docker login -u jagadesh999 --password-stdin'
+                    }
+                    sh 'docker push jagadesh999/batch13:${BUILD_NUMBER}'
+                }
+            }
+        }
+
+        stage('Update Deployment File in GitHub') {
+            steps {
+                echo 'Updating Kubernetes Deployment YAML'
+                withCredentials([string(credentialsId: 'githubtoken', variable: 'GITHUB_TOKEN')]) {
+                    sh '''
+                        git config user.email "jagadesh0436@gmail.com"
+                        git config user.name "Jagadesh"
+                        BUILD_NUMBER=${BUILD_NUMBER}
+                        sed -i "s|batch13:.*|batch13:${BUILD_NUMBER}|g" deploymentfiles/deployment.yml
+                        git add .
+                        git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+
+                        git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git
+                        git push origin HEAD:main
+                    '''
+                }
+            }
+        }
+    }
+}
